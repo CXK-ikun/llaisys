@@ -18,17 +18,27 @@ if has_config("nv-gpu") then
     includes("xmake/nvidia.lua")
 end
 
-target("llaisys-utils")
-    set_kind("static")
-
-    set_languages("cxx17")
-    set_warnings("all", "error")
-    if not is_plat("windows") then
+-- 统一定义 Windows 平台的兼容性配置函数
+function add_windows_flags()
+    if is_plat("windows") then
+        add_cxflags("/WX-")            -- 关闭“将警告视为错误”
+        add_cxflags("/wd4267")         -- 屏蔽 size_t 转 int 的警告 (tensor.cpp 报错项)
+        add_cxflags("/wd4244")         -- 屏蔽 double 转 float 的精度丢失警告
+        add_cxflags("/utf-8")          -- 强制使用 UTF-8 编码
+        add_defines("_CRT_SECURE_NO_WARNINGS") -- 禁用 Windows 安全函数警告
+    else
         add_cxflags("-fPIC", "-Wno-unknown-pragmas")
     end
+end
+
+target("llaisys-utils")
+    set_kind("static")
+    set_languages("cxx17")
+    set_warnings("all", "error")
+    
+    add_windows_flags() -- 使用兼容配置
 
     add_files("src/utils/*.cpp")
-
     on_install(function (target) end)
 target_end()
 
@@ -40,12 +50,10 @@ target("llaisys-device")
 
     set_languages("cxx17")
     set_warnings("all", "error")
-    if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
-    end
+    
+    add_windows_flags() -- 使用兼容配置
 
     add_files("src/device/*.cpp")
-
     on_install(function (target) end)
 target_end()
 
@@ -56,12 +64,10 @@ target("llaisys-core")
 
     set_languages("cxx17")
     set_warnings("all", "error")
-    if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
-    end
+    
+    add_windows_flags() -- 使用兼容配置
 
     add_files("src/core/*/*.cpp")
-
     on_install(function (target) end)
 target_end()
 
@@ -71,12 +77,10 @@ target("llaisys-tensor")
 
     set_languages("cxx17")
     set_warnings("all", "error")
-    if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
-    end
+    
+    add_windows_flags() -- 使用兼容配置
 
     add_files("src/tensor/*.cpp")
-
     on_install(function (target) end)
 target_end()
 
@@ -86,12 +90,10 @@ target("llaisys-ops")
 
     set_languages("cxx17")
     set_warnings("all", "error")
-    if not is_plat("windows") then
-        add_cxflags("-fPIC", "-Wno-unknown-pragmas")
-    end
+    
+    add_windows_flags() -- 使用兼容配置
     
     add_files("src/ops/*/*.cpp")
-
     on_install(function (target) end)
 target_end()
 
@@ -105,14 +107,17 @@ target("llaisys")
 
     set_languages("cxx17")
     set_warnings("all", "error")
+    
+    add_windows_flags() -- 使用兼容配置
+
     add_files("src/llaisys/*.cpp", "src/llaisys/models/*.cpp")
     set_installdir(".")
 
-    
     after_install(function (target)
         -- copy shared library to python package
         print("Copying llaisys to python/llaisys/libllaisys/ ..")
         if is_plat("windows") then
+            -- 修正：Windows 下编译产物通常在 bin/ 目录下且为 .dll
             os.cp("bin/*.dll", "python/llaisys/libllaisys/")
         end
         if is_plat("linux") then

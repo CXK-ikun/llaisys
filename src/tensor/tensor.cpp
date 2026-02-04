@@ -19,7 +19,7 @@ tensor_t Tensor::create(const std::vector<size_t> &shape,
     std::vector<ptrdiff_t> strides(ndim_);
     size_t stride = 1;
     for (size_t i = 1; i <= ndim_; i++) {
-        strides[ndim_ - i] = stride;
+        strides[ndim_ - i] = (ptrdiff_t)stride;
         stride *= shape[ndim_ - i];
     }
     TensorMeta meta{dtype, shape, strides};
@@ -62,18 +62,19 @@ std::string Tensor::info() const {
 
 template <typename T>
 void print_data(const T *data, const std::vector<size_t> &shape, const std::vector<ptrdiff_t> &strides, size_t dim) {
-    if (dim == shape.size() - 1) {
+    // 修复 C4267：显式转换类型以匹配 Windows 下的 size_t 与 int 比较
+    if (dim == (size_t)(shape.size() - 1)) {
         for (size_t i = 0; i < shape[dim]; i++) {
              if constexpr (std::is_same_v<T, bf16_t> || std::is_same_v<T, fp16_t>) {
-                std::cout << utils::cast<float>(data[i * strides[dim]]) << " ";
+                std::cout << utils::cast<float>(data[(size_t)(i * strides[dim])]) << " ";
             } else {
-                std::cout << data[i * strides[dim]] << " ";
+                std::cout << data[(size_t)(i * strides[dim])] << " ";
             }
         }
         std::cout << std::endl;
-    } else if (dim < shape.size() - 1) {
+    } else if (dim < (size_t)(shape.size() - 1)) {
         for (size_t i = 0; i < shape[dim]; i++) {
-            print_data(data + i * strides[dim], shape, strides, dim + 1);
+            print_data(data + (size_t)(i * strides[dim]), shape, strides, dim + 1);
         }
     }
 }
@@ -101,10 +102,10 @@ void Tensor::debug() const {
 
 bool Tensor::isContiguous() const {
     size_t z = 1;
-    for (int i = _meta.shape.size() - 1; i >= 0; i--) {
-        // 修复：强制转换类型，解决 signed/unsigned 比较警告
-        if (_meta.strides[i] != (ptrdiff_t)z) return false;
-        z *= _meta.shape[i];
+    // 修复 C4267：Windows MSVC 严禁 size_t 与 int 混用
+    for (int i = (int)(_meta.shape.size() - 1); i >= 0; i--) {
+        if (_meta.strides[(size_t)i] != (ptrdiff_t)z) return false;
+        z *= _meta.shape[(size_t)i];
     }
     return true;
 }
@@ -128,9 +129,9 @@ tensor_t Tensor::view(const std::vector<size_t> &shape) const {
 
     std::vector<ptrdiff_t> new_strides(shape.size());
     size_t stride = 1;
-    for(int i = shape.size()-1; i >=0; --i) {
-        new_strides[i] = stride;
-        stride *= shape[i];
+    for(int i = (int)(shape.size() - 1); i >= 0; --i) {
+        new_strides[(size_t)i] = (ptrdiff_t)stride;
+        stride *= shape[(size_t)i];
     }
     
     TensorMeta new_meta = _meta;
@@ -145,7 +146,7 @@ tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
     
     TensorMeta new_meta = _meta;
     new_meta.shape[dim] = end - start;
-    size_t new_offset = _offset + start * _meta.strides[dim] * elementSize();
+    size_t new_offset = _offset + start * (size_t)_meta.strides[dim] * elementSize();
     
     return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, new_offset));
 }
