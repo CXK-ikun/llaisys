@@ -55,7 +55,6 @@ inline tensor_t unwrap(llaisysTensor_t ptr) {
     return ((LlaisysTensor*)ptr)->tensor;
 }
 
-// 修正：增加 dtype 参数，允许创建不同类型的 Tensor
 llaisysTensor_t create_wrapped(LlaisysQwen2Model* model, const std::vector<size_t>& shape, llaisysDataType_t dtype, llaisysDeviceType_t dev, int dev_id) {
     auto t = Tensor::create(shape, dtype, dev, dev_id);
     
@@ -71,7 +70,6 @@ LlaisysQwen2Model* llaisysQwen2ModelCreate(const LlaisysQwen2Meta* meta, llaisys
     model->meta = *meta;
     int dev_id = (ndevice > 0) ? device_ids[0] : 0;
 
-    // 默认使用模型精度 (Float32)
     auto cw = [&](std::vector<size_t> shape) -> llaisysTensor_t {
         return create_wrapped(model, shape, (llaisysDataType_t)meta->dtype, dev, dev_id);
     };
@@ -113,12 +111,11 @@ LlaisysQwen2Model* llaisysQwen2ModelCreate(const LlaisysQwen2Meta* meta, llaisys
         model->v_cache.push_back(Tensor::create({meta->maxseq, meta->nkvh, meta->dh}, (llaisysDataType_t)meta->dtype, dev, dev_id));
     }
     
-    // 运行时 Buffer (F32)
+    // Buffers
     model->x_buf_wrapper = (LlaisysTensor*)create_wrapped(model, {1, meta->hs}, (llaisysDataType_t)meta->dtype, dev, dev_id);
     model->residual_wrapper = (LlaisysTensor*)create_wrapped(model, {1, meta->hs}, (llaisysDataType_t)meta->dtype, dev, dev_id);
     model->logits_buf_wrapper = (LlaisysTensor*)create_wrapped(model, {1, meta->voc}, (llaisysDataType_t)meta->dtype, dev, dev_id);
     
-    // 修正：pos_id 和 input_id 必须是 INT64 (Type 6)，否则写入 8 字节数据时会溢出 F32 的 4 字节 buffer
     model->pos_id_wrapper = (LlaisysTensor*)create_wrapped(model, {1}, LLAISYS_DTYPE_I64, LLAISYS_DEVICE_CPU, 0);
     model->input_id_wrapper = (LlaisysTensor*)create_wrapped(model, {1}, LLAISYS_DTYPE_I64, LLAISYS_DEVICE_CPU, 0);
 
@@ -134,15 +131,14 @@ LlaisysQwen2Weights* llaisysQwen2ModelWeights(LlaisysQwen2Model* model) {
 }
 
 int64_t llaisysQwen2ModelInfer(LlaisysQwen2Model* model, int64_t* token_ids, size_t ntoken) {
-    //std::cerr << "[C++] Entering llaisysQwen2ModelInfer, current_pos=" << model->current_pos << " ntoken=" << ntoken << "\n";
     auto& m = model->meta;
     auto dev = model->x_buf_wrapper->tensor->deviceType();
     
     int64_t current_token_id = token_ids[model->current_pos];
     
     *(int64_t*)model->input_id_wrapper->tensor->data() = current_token_id;
-    // Inline embedding: copy row `current_token_id` from in_embed to x_buf
-    //std::cerr << "[C++] qwen2: before inline embedding copy, token=" << current_token_id << "\n";
+    
+    // Inline embedding
     {
         auto in_embed = unwrap(model->weights.in_embed);
         size_t hidden = m.hs;
@@ -153,15 +149,9 @@ int64_t llaisysQwen2ModelInfer(LlaisysQwen2Model* model, int64_t* token_ids, siz
         std::byte* dst = model->x_buf_wrapper->tensor->data();
         std::memcpy(dst, src, row_bytes);
     }
-    //std::cerr << "[C++] qwen2: after inline embedding copy\n";
 
-    // 2. Transformer Layers
+    // Transformer Layers
     for(size_t i=0; i<m.nlayer; i++) {
-        
-        // 进度打印
-        printf("[C++ Layer] Processing Layer %zu / %zu ...\r", i+1, m.nlayer);
-        fflush(stdout); 
-
         ops::rearrange(model->residual_wrapper->tensor, model->x_buf_wrapper->tensor);
 
         ops::rms_norm(model->x_buf_wrapper->tensor, model->x_buf_wrapper->tensor, unwrap(model->weights.attn_norm_w[i]), m.epsilon);

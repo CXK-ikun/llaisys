@@ -22,34 +22,52 @@ def load_hf_model(model_path=None, device_name="cpu"):
     else:
         print(f"Loading model from Hugging Face: {model_id}")
         model_path = snapshot_download(model_id)
-    
-    # 只加载 Tokenizer，不加载 PyTorch 模型（太慢了！）
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    
-    # 返回 None 作为 model，因为我们不需要它
-    return tokenizer, None, model_path
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype=torch.bfloat16,
+        device_map=torch_device(device_name),
+        trust_remote_code=True,
+    )
+
+    return tokenizer, model, model_path
+
+
+def hf_infer(
+    prompt, tokenizer, model, max_new_tokens=128, top_p=0.8, top_k=50, temperature=0.8
+):
+    input_content = tokenizer.apply_chat_template(
+        conversation=[{"role": "user", "content": prompt}],
+        add_generation_prompt=True,
+        tokenize=False,
+    )
+    inputs = tokenizer.encode(input_content, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        outputs = model.generate(
+            inputs,
+            max_new_tokens=max_new_tokens,
+            top_k=top_k,
+            top_p=top_p,
+            temperature=temperature,
+        )
+    result = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return outputs[0].tolist(), result
 
 
 def load_llaisys_model(model_path, device_name):
-    # 这里的 load_weights 我们在 Python 包装里实现了
     model = llaisys.models.Qwen2(model_path, llaisys_device(device_name))
-    model.load_weights() # 显式调用加载权重
     return model
 
 
 def llaisys_infer(
     prompt, tokenizer, model, max_new_tokens=128, top_p=0.8, top_k=50, temperature=0.8
 ):
-    print("\n[Test] Tokenizing prompt...")
     input_content = tokenizer.apply_chat_template(
         conversation=[{"role": "user", "content": prompt}],
         add_generation_prompt=True,
         tokenize=False,
     )
     inputs = tokenizer.encode(input_content)
-    print(f"[Test] Input Tokens: {inputs}")
-    
-    print(f"[Test] Starting LLAISYS generation (max {max_new_tokens} tokens)...")
     outputs = model.generate(
         inputs,
         max_new_tokens=max_new_tokens,
@@ -74,28 +92,46 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # 1. 这一步很快，只加载分词器
-    tokenizer, _, model_path = load_hf_model(args.model, args.device)
+    top_p, top_k, temperature = args.top_p, args.top_k, args.temperature
+    if args.test:
+        top_p, top_k, temperature = 1.0, 1, 1.0
 
-    # === SKIPPING PYTORCH INFERENCE ===
-    # 我们把原来这里的 hf_infer 全删了，直接进正题
-    
-    print("\n=== LLAISYS Inference ===\n")
-    
-    # 2. 加载你的 C++ 模型
-    model = load_llaisys_model(model_path, args.device)
-    
+    tokenizer, model, model_path = load_hf_model(args.model, args.device)
+
+    # Example prompt
     start_time = time.time()
-    
-    # 3. 运行你的推理
+    tokens, output = hf_infer(
+        args.prompt,
+        tokenizer,
+        model,
+        max_new_tokens=args.max_steps,
+        top_p=top_p,
+        top_k=top_k,
+        temperature=temperature,
+    )
+    end_time = time.time()
+
+    del model
+    gc.collect()
+
+    print("\n=== Answer ===\n")
+    print("Tokens:")
+    print(tokens)
+    print("\nContents:")
+    print(output)
+    print("\n")
+    print(f"Time elapsed: {(end_time - start_time):.2f}s\n")
+
+    model = load_llaisys_model(model_path, args.device)
+    start_time = time.time()
     llaisys_tokens, llaisys_output = llaisys_infer(
         args.prompt,
         tokenizer,
         model,
-        max_new_tokens=args.max_steps, # 实际上受限于 qwen2.py 里的硬编码 5
-        top_p=args.top_p,
-        top_k=args.top_k,
-        temperature=args.temperature,
+        max_new_tokens=args.max_steps,
+        top_p=top_p,
+        top_k=top_k,
+        temperature=temperature,
     )
 
     end_time = time.time()
@@ -107,3 +143,7 @@ if __name__ == "__main__":
     print(llaisys_output)
     print("\n")
     print(f"Time elapsed: {(end_time - start_time):.2f}s\n")
+
+    if args.test:
+        assert llaisys_tokens == tokens
+        print("\033[92mTest passed!\033[0m\n")
