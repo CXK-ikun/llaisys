@@ -56,8 +56,6 @@ struct LlaisysQwen2Model {
     }
 };
 
-// --- 内部辅助函数 (C++ Linkage) ---
-
 // 必须在 extern "C" 外，因为它返回 std::shared_ptr (tensor_t)
 inline tensor_t unwrap(llaisysTensor_t ptr) {
     if (!ptr) return nullptr;

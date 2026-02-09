@@ -66,8 +66,6 @@ class Qwen2:
         self.meta.theta = getattr(self.config, "rope_theta", 10000.0)
         self.meta.end_token = 151643 # EOS
 
-        # 3. === 关键修复：显式声明 C 函数的返回类型和参数类型 ===
-        # 显式使用 c_void_p 防止 Windows 64位环境下指针被误认为 32位 int 导致溢出
         
         # Model Create
         self.lib.llaisysQwen2ModelCreate.restype = ctypes.c_void_p
